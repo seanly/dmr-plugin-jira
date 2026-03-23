@@ -41,10 +41,11 @@ make install  # 安装到 ~/.dmr/plugins/dmr-plugin-jira
 | `jiraWorklogAdd` | `POST /rest/api/2/issue/{issueKey}/worklog`：参数 `issueKey`, `timeSpent`, `started`, `comment`。 |
 | `jiraIssueGet` | `GET /rest/api/2/issue/{issueKey}`：可选 `fields`（逗号分隔）；默认 `summary,issuetype,status,assignee`。可加上 `timetracking` 查看剩余估算等。 |
 | `jiraIssuesSearch` | `POST /rest/api/2/search`：必填 `projectKey`；可选 `issueType`、`maxResults`、`startAt`、`includeTimetracking`。**默认条数与上限**由配置 `search_default_max_results` / `search_max_results_cap` 控制（未配置时分别为 **10** / **20**）。内部使用安全拼装的 JQL（`projectKey` 校验为 Jira key 模式；`issueType` 经 JQL 转义）。 |
+| `jiraIssueWorklogs` | `GET /rest/api/2/issue/{key}/worklog`：分页 `startAt` / `maxResults`（默认 **20**，上限 **100**）。可选 `authorName`、`startedFrom`、`startedTo`（与 Jira `started` 同形，如 `...000+0800`）。**返回体已精简**：每条只含 `id`、`started`、`timeSpent`、`timeSpentSeconds`、`comment`、`author`（仅 `name`/`key`/`displayName`），去掉 `avatarUrls`、`emailAddress`、`self` 等大字段，减少上下文体积。`total` 为 Jira 侧未过滤的总数；过滤只作用于当前页，翻页需递增 `startAt`。 |
 
 ## OPA
 
-默认策略中 **`jiraWorklogAdd`** 会触发 **require_approval**（写入外部系统）。只读工具 **`jiraIssueGet`**、**`jiraIssuesSearch`** 走默认 allow。可在宿主 `plugins/opapolicy/policies/` 中按需调整。
+默认策略中 **`jiraWorklogAdd`** 会触发 **require_approval**（写入外部系统）。只读工具 **`jiraIssueGet`**、**`jiraIssuesSearch`**、**`jiraIssueWorklogs`** 走默认 allow。可在宿主 `plugins/opapolicy/policies/` 中按需调整。
 
 ## 架构
 
@@ -52,7 +53,8 @@ make install  # 安装到 ~/.dmr/plugins/dmr-plugin-jira
 DMR host ── go-plugin ──▶ dmr-plugin-jira
                               ├── jiraWorklogAdd
                               ├── jiraIssueGet
-                              └── jiraIssuesSearch
+                              ├── jiraIssuesSearch
+                              └── jiraIssueWorklogs
                                       │
                                       ▼
                               Jira REST API v2
@@ -60,6 +62,31 @@ DMR host ── go-plugin ──▶ dmr-plugin-jira
 
 无 Webhook、无反向 RPC 触发宿主 `RunAgent`（与 `dmr-plugin-gitlab` 的 MR 审查流程不同）。
 
+## jiraIssueWorklogs（原子查询 + 条件）
+
+| 参数 | 说明 |
+|------|------|
+| `issueKey` | 必填。 |
+| `startAt` | 可选，默认 `0`，原样传给 Jira 分页。 |
+| `maxResults` | 可选，默认 **20**，上限 **100**。 |
+| `authorName` | 可选；只保留 `author.name` 或 `author.key`（不区分大小写）。 |
+| `startedFrom` / `startedTo` | 可选；与 Jira `started` 同形（如 `2026-03-10T00:00:00.000+0800`）；含边界（`started >= startedFrom` 且 `started <= startedTo`）。 |
+
+**语义（重要）**
+
+- Jira 的 **`total` / `startAt` / `maxResults`** 表示**未按 author/时间过滤**的分页；`worklogs` 数组是**本页拉取后再过滤、再精简字段**后的结果。
+- **`filteredCount`** = 当前返回的 `worklogs` 条数。过滤**只作用于当前页**；若本页过滤后很少，仍可能有其它页满足条件，需 **`startAt += maxResults`**（或按 Jira 约定递增）多次调用，直到 `startAt >= total`。
+- 返回体**已去掉** `avatarUrls`、`emailAddress`、`self` 等，仅保留必要字段，减小上下文。
+
 ## 手动验证（curl）
 
-参见你方已验证的 Basic Auth、`POST worklog` 与 `POST search`；插件发出的请求体与之一致。
+列出某 issue 的 worklog（原始 Jira JSON，用于对照字段）：
+
+```bash
+curl -sS -u "$JIRA_USER:$JIRA_PASS" \
+  "$JIRA_BASE/rest/api/2/issue/$ISSUE_KEY/worklog?startAt=0&maxResults=50"
+```
+
+响应中应含 `startAt`、`maxResults`、`total`、`worklogs`；每条含 `started`、`author`、`timeSpentSeconds` 等。插件 `jiraIssueWorklogs` 使用同一 GET，再压缩与可选过滤。
+
+其它：Basic Auth、`POST worklog`、`POST search` 与插件一致。

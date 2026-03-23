@@ -117,6 +117,22 @@ func (p *JiraPlugin) ProvideTools(req *proto.ProvideToolsRequest, resp *proto.Pr
 				"required": ["projectKey"]
 			}`,
 		},
+		{
+			Name:        "jiraIssueWorklogs",
+			Description: "分页列出某 issue 的工作日志；返回精简字段（无头像/邮箱）；可选按登记人、started 时间范围过滤。total 为 Jira 未过滤总数，需翻页时增大 startAt",
+			ParametersJSON: `{
+				"type": "object",
+				"properties": {
+					"issueKey": {"type": "string", "description": "Issue key"},
+					"startAt": {"type": "integer", "description": "分页，默认 0"},
+					"maxResults": {"type": "integer", "description": "每页条数，默认 20，最大 100"},
+					"authorName": {"type": "string", "description": "可选，只保留 author.name 或 author.key 匹配的条目"},
+					"startedFrom": {"type": "string", "description": "可选，started 下限，建议与 Jira 一致如 2026-03-10T00:00:00.000+0800"},
+					"startedTo": {"type": "string", "description": "可选，started 上限（含该时刻）"}
+				},
+				"required": ["issueKey"]
+			}`,
+		},
 	}
 	return nil
 }
@@ -184,6 +200,14 @@ func (p *JiraPlugin) executeTool(name string, args map[string]any) (any, error) 
 			fields = append(fields, "timetracking")
 		}
 		return p.client.Search(jql, fields, maxResults, startAt)
+	case "jiraIssueWorklogs":
+		issueKey, _ := args["issueKey"].(string)
+		wStart := intArg(args, "startAt", 0)
+		wMax := intArg(args, "maxResults", defaultWorklogMaxResults)
+		authorName, _ := args["authorName"].(string)
+		startedFrom, _ := args["startedFrom"].(string)
+		startedTo, _ := args["startedTo"].(string)
+		return p.client.GetIssueWorklogs(issueKey, wStart, wMax, authorName, startedFrom, startedTo)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
