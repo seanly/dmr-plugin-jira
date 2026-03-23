@@ -1,0 +1,12 @@
+# Add under ~/.dmr/config.yaml → plugins (merge with your existing list).
+plugins:
+  - name: jira
+    enabled: true
+    path: ~/.dmr/plugins/dmr-plugin-jira
+    config:
+      jira_url: "https://issues.example.com"
+      user: "your-username"
+      password: "your-password-or-token"
+      # 可选：jiraIssuesSearch 默认条数与上限（省略则用 10 / 20）
+      # search_default_max_results: 10
+      # search_max_results_cap: 20

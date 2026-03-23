@@ -1,0 +1,25 @@
+# Binary
+dmr-plugin-jira
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Cross-build artifacts
+dmr-plugin-jira-linux-amd64
+dmr-plugin-jira-linux-arm64
+dmr-plugin-jira-darwin-amd64
+dmr-plugin-jira-darwin-arm64
+
+.DS_Store
