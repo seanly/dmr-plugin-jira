@@ -77,61 +77,32 @@ func (p *JiraPlugin) RequestBatchApproval(req *proto.BatchApprovalRequest, resp 
 func (p *JiraPlugin) ProvideTools(req *proto.ProvideToolsRequest, resp *proto.ProvideToolsResponse) error {
 	resp.Tools = []proto.ToolDef{
 		{
-			Name:        "jiraWorklogAdd",
-			Description: "在 Jira issue（含 Epic）上登记标准工作日志（REST worklog）",
-			ParametersJSON: `{
-				"type": "object",
-				"properties": {
-					"issueKey": {"type": "string", "description": "Issue key，如 INF-771"},
-					"timeSpent": {"type": "string", "description": "耗时，Jira 时长表达式，如 8h、30m、1m"},
-					"started": {"type": "string", "description": "开始时间，含时区，如 2026-03-23T09:00:00.000+0800"},
-					"comment": {"type": "string", "description": "工作说明"}
-				},
-				"required": ["issueKey", "timeSpent", "started", "comment"]
-			}`,
+			Name:           "jiraWorklogAdd",
+			Description:    "在 Jira issue（含 Epic）上登记标准工作日志（REST worklog）",
+			ParametersJSON: `{"type": "object", "properties": {"issueKey": {"type": "string", "description": "Issue key，如 INF-771"}, "timeSpent": {"type": "string", "description": "耗时，Jira 时长表达式，如 8h、30m、1m"}, "started": {"type": "string", "description": "开始时间，含时区，如 2026-03-23T09:00:00.000+0800"}, "comment": {"type": "string", "description": "工作说明"}}, "required": ["issueKey", "timeSpent", "started", "comment"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, worklog, log, time, track, 工时, 登记, 记录",
 		},
 		{
-			Name:        "jiraIssueGet",
-			Description: "获取单个 Jira issue 的字段（可含 timetracking 剩余估算等）",
-			ParametersJSON: `{
-				"type": "object",
-				"properties": {
-					"issueKey": {"type": "string", "description": "Issue key"},
-					"fields": {"type": "string", "description": "逗号分隔字段名；留空则默认 summary,issuetype,status,assignee"}
-				},
-				"required": ["issueKey"]
-			}`,
+			Name:           "jiraIssueGet",
+			Description:    "获取单个 Jira issue 的字段（可含 timetracking 剩余估算等）",
+			ParametersJSON: `{"type": "object", "properties": {"issueKey": {"type": "string", "description": "Issue key"}, "fields": {"type": "string", "description": "逗号分隔字段名；留空则默认 summary,issuetype,status,assignee"}}, "required": ["issueKey"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, issue, get, detail, info, 问题, 获取, 详情",
 		},
 		{
-			Name:        "jiraIssuesSearch",
-			Description: "按项目 key 搜索 issues，可选 issuetype 过滤；可选包含 timetracking",
-			ParametersJSON: `{
-				"type": "object",
-				"properties": {
-					"projectKey": {"type": "string", "description": "项目 key，如 INF"},
-					"issueType": {"type": "string", "description": "可选，类型名如 Epic；不传则不限定类型"},
-					"maxResults": {"type": "integer", "description": "默认与上限见宿主 config 中 search_default_max_results / search_max_results_cap；未配置时默认 10、上限 20"},
-					"startAt": {"type": "integer", "description": "分页偏移，默认 0"},
-					"includeTimetracking": {"type": "boolean", "description": "为 true 时在结果中包含 timetracking 字段"}
-				},
-				"required": ["projectKey"]
-			}`,
+			Name:           "jiraIssuesSearch",
+			Description:    "按项目 key 搜索 issues，可选 issuetype 过滤；可选包含 timetracking",
+			ParametersJSON: `{"type": "object", "properties": {"projectKey": {"type": "string", "description": "项目 key，如 INF"}, "issueType": {"type": "string", "description": "可选，类型名如 Epic；不传则不限定类型"}, "maxResults": {"type": "integer", "description": "默认与上限见宿主 config 中 search_default_max_results / search_max_results_cap；未配置时默认 10、上限 20"}, "startAt": {"type": "integer", "description": "分页偏移，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "为 true 时在结果中包含 timetracking 字段"}}, "required": ["projectKey"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, issue, search, find, project, epic, 问题, 搜索, 查找, 项目",
 		},
 		{
-			Name:        "jiraIssueWorklogs",
-			Description: "分页列出某 issue 的工作日志；返回精简字段（无头像/邮箱）；可选按登记人、started 时间范围过滤。total 为 Jira 未过滤总数，需翻页时增大 startAt",
-			ParametersJSON: `{
-				"type": "object",
-				"properties": {
-					"issueKey": {"type": "string", "description": "Issue key"},
-					"startAt": {"type": "integer", "description": "分页，默认 0"},
-					"maxResults": {"type": "integer", "description": "每页条数，默认 20，最大 100"},
-					"authorName": {"type": "string", "description": "可选，只保留 author.name 或 author.key 匹配的条目"},
-					"startedFrom": {"type": "string", "description": "可选，started 下限，建议与 Jira 一致如 2026-03-10T00:00:00.000+0800"},
-					"startedTo": {"type": "string", "description": "可选，started 上限（含该时刻）"}
-				},
-				"required": ["issueKey"]
-			}`,
+			Name:           "jiraIssueWorklogs",
+			Description:    "分页列出某 issue 的工作日志；返回精简字段（无头像/邮箱）；可选按登记人、started 时间范围过滤。total 为 Jira 未过滤总数，需翻页时增大 startAt",
+			ParametersJSON: `{"type": "object", "properties": {"issueKey": {"type": "string", "description": "Issue key"}, "startAt": {"type": "integer", "description": "分页，默认 0"}, "maxResults": {"type": "integer", "description": "每页条数，默认 20，最大 100"}, "authorName": {"type": "string", "description": "可选，只保留 author.name 或 author.key 匹配的条目"}, "startedFrom": {"type": "string", "description": "可选，started 下限，建议与 Jira 一致如 2026-03-10T00:00:00.000+0800"}, "startedTo": {"type": "string", "description": "可选，started 上限（含该时刻）"}}, "required": ["issueKey"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, worklog, list, history, issue, 工时, 列表, 历史",
 		},
 	}
 	return nil
