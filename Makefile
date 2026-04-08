@@ -1,7 +1,8 @@
-.PHONY: build install clean tidy cross-build
+.PHONY: build install install-policy clean tidy cross-build
 
 BINARY := dmr-plugin-jira
 INSTALL_DIR := $(HOME)/.dmr/plugins
+POLICY_DIR := $(HOME)/.dmr/etc/policies
 
 build: tidy
 	go build -o $(BINARY) .
@@ -19,5 +20,9 @@ install: build
 	mkdir -p $(INSTALL_DIR)
 	cp $(BINARY) $(INSTALL_DIR)/
 
+install-policy:
+	mkdir -p $(POLICY_DIR)
+	cp policies/jira.rego $(POLICY_DIR)/
+
 clean:
-	rm -f $(BINARY) $(BINARY)-linux-amd64 $(BINARY)-linux-arm64 $(BINARY)-darwin-amd64 $(BINARY)-darwin-arm64
+	rm -f $(BINARY)
