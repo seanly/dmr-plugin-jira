@@ -1,4 +1,4 @@
-package main
+package jira
 
 // JiraPluginConfig is loaded from DMR plugins[].config (JSON keys match struct tags).
 type JiraPluginConfig struct {

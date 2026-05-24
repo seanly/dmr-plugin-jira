@@ -8,7 +8,10 @@ decision := {"action": "allow", "reason": "jira read-only query", "risk": "low"}
 	input.tool in [
 		"jiraIssueGet",
 		"jiraIssuesSearch",
-		"jiraIssueWorklogs"
+		"jiraAssigneeIssues",
+		"jiraEpicLinkedIssues",
+		"jiraSprintIssues",
+		"jiraIssueWorklogs",
 	]
 }
 

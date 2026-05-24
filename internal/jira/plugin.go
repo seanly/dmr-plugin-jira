@@ -1,9 +1,10 @@
-package main
+package jira
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/seanly/dmr/pkg/plugin/proto"
@@ -98,6 +99,27 @@ func (p *JiraPlugin) ProvideTools(req *proto.ProvideToolsRequest, resp *proto.Pr
 			SearchHint:     "jira, issue, search, find, project, epic, 问题, 搜索, 查找, 项目",
 		},
 		{
+			Name:        "jiraAssigneeIssues",
+			Description: "列出指定用户的 issues，按更新时间倒序（最近在前）。可选限定项目 key；可选传入多个 issue 类型名（至多 10 个，OR）；assignee 为 Jira 用户名风格的 token（非任意 JQL）。可选 includeTimetracking",
+			ParametersJSON: `{"type": "object", "properties": {"assignee": {"type": "string", "description": "负责人用户名/token，如 jdoe"}, "projectKey": {"type": "string", "description": "可选；不传则不按项目筛选（Browse 权限生效）"}, "issueTypes": {"type": "array", "items": {"type": "string"}, "description": "可选，issuetype 名称列表（最多 10 个）如 Story Task"}, "maxResults": {"type": "integer", "description": "同 jiraIssuesSearch 默认与 cap"}, "startAt": {"type": "integer", "description": "分页，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "true 时在结果中含 timetracking"}}, "required": ["assignee"]}`,
+			Group:       "extended",
+			SearchHint:  "jira, assignee, owner, mine, tasks, sprint, backlog, 负责人, 最近, 分配给",
+		},
+		{
+			Name:           "jiraEpicLinkedIssues",
+			Description:    "classic Scrum：列出挂载在指定 Epic issue key 下的 issues（使用 JQL 字段 \\\"Epic Link\\\"）；若实例未使用该字段名将报错需改配置后再议。可选 includeTimetracking；按 updated 倒序",
+			ParametersJSON: `{"type": "object", "properties": {"epicKey": {"type": "string", "description": "Epic issue key，如 INF-42"}, "maxResults": {"type": "integer", "description": "同搜索默认/cap"}, "startAt": {"type": "integer", "description": "分页"}, "includeTimetracking": {"type": "boolean", "description": "true 时含 timetracking"}}, "required": ["epicKey"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, epic, story, scrum, link, hierarchy, Epic, 史诗, 子项",
+		},
+		{
+			Name:           "jiraSprintIssues",
+			Description:    "REST Agile：`GET .../rest/agile/1.0/sprint/{sprintId}/issue`。返回 Jira JSON（含 issues 等）；分页 startAt/maxResults 与宿主搜索 cap 一致",
+			ParametersJSON: `{"type": "object", "properties": {"sprintId": {"type": "integer", "description": "敏捷 sprint 数字 ID（非 sprint 名称）"}, "maxResults": {"type": "integer", "description": "同默认/cap"}, "startAt": {"type": "integer", "description": "分页，默认 0"}}, "required": ["sprintId"]}`,
+			Group:          "extended",
+			SearchHint:     "jira, agile, sprint, board, backlog, Scrum, iteration, sprintId",
+		},
+		{
 			Name:           "jiraIssueWorklogs",
 			Description:    "分页列出某 issue 的工作日志；返回精简字段（无头像/邮箱）；可选按登记人、started 时间范围过滤。total 为 Jira 未过滤总数，需翻页时增大 startAt",
 			ParametersJSON: `{"type": "object", "properties": {"issueKey": {"type": "string", "description": "Issue key"}, "startAt": {"type": "integer", "description": "分页，默认 0"}, "maxResults": {"type": "integer", "description": "每页条数，默认 20，最大 100"}, "authorName": {"type": "string", "description": "可选，只保留 author.name 或 author.key 匹配的条目"}, "startedFrom": {"type": "string", "description": "可选，started 下限，建议与 Jira 一致如 2026-03-10T00:00:00.000+0800"}, "startedTo": {"type": "string", "description": "可选，started 上限（含该时刻）"}}, "required": ["issueKey"]}`,
@@ -105,6 +127,24 @@ func (p *JiraPlugin) ProvideTools(req *proto.ProvideToolsRequest, resp *proto.Pr
 			SearchHint:     "jira, worklog, list, history, issue, 工时, 列表, 历史",
 		},
 	}
+	return nil
+}
+
+// ProvideSystemPrompt documents the Jira REST identity (config user) for the model without exposing secrets.
+func (p *JiraPlugin) ProvideSystemPrompt(req *proto.ProvideSystemPromptRequest, resp *proto.ProvideSystemPromptResponse) error {
+	_ = req
+	u := strings.TrimSpace(p.config.User)
+	if u == "" {
+		resp.Fragment = ""
+		return nil
+	}
+	resp.Fragment = fmt.Sprintf(
+		"### Jira (external plugin)\n"+
+			"This host calls Jira REST as username %q (**plugins.config.user**). "+
+			"It is the **API/integration** identity, not automatically the IM/chat user. "+
+			"When the user says “my” tickets or worklogs, prefer **assignee** from context (e.g. RunAgent ContextJSON) or ask; do not assume it matches this user unless your deployment documents that.",
+		u,
+	)
 	return nil
 }
 
@@ -171,6 +211,87 @@ func (p *JiraPlugin) executeTool(name string, args map[string]any) (any, error) 
 			fields = append(fields, "timetracking")
 		}
 		return p.client.Search(jql, fields, maxResults, startAt)
+	case "jiraAssigneeIssues":
+		assignee, _ := args["assignee"].(string)
+		projectKey, _ := args["projectKey"].(string)
+		types := issueTypesSliceArg(args["issueTypes"])
+		defMax := p.searchDefaultMax
+		maxCap := p.searchMaxCap
+		if defMax <= 0 {
+			defMax = defaultSearchMaxResults
+		}
+		if maxCap <= 0 {
+			maxCap = maxSearchMaxResultsCap
+		}
+		maxResults := intArg(args, "maxResults", defMax)
+		if maxResults <= 0 {
+			maxResults = defMax
+		}
+		if maxResults > maxCap {
+			maxResults = maxCap
+		}
+		startAt := intArg(args, "startAt", 0)
+		if startAt < 0 {
+			startAt = 0
+		}
+		includeTT := boolArg(args, "includeTimetracking")
+		fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
+		if includeTT {
+			fields = append(fields, "timetracking")
+		}
+		return p.client.AssigneeIssuesSearch(projectKey, assignee, types, fields, maxResults, startAt)
+	case "jiraEpicLinkedIssues":
+		epicKey, _ := args["epicKey"].(string)
+		defMax := p.searchDefaultMax
+		maxCap := p.searchMaxCap
+		if defMax <= 0 {
+			defMax = defaultSearchMaxResults
+		}
+		if maxCap <= 0 {
+			maxCap = maxSearchMaxResultsCap
+		}
+		maxResults := intArg(args, "maxResults", defMax)
+		if maxResults <= 0 {
+			maxResults = defMax
+		}
+		if maxResults > maxCap {
+			maxResults = maxCap
+		}
+		startAt := intArg(args, "startAt", 0)
+		if startAt < 0 {
+			startAt = 0
+		}
+		includeTT := boolArg(args, "includeTimetracking")
+		fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
+		if includeTT {
+			fields = append(fields, "timetracking")
+		}
+		return p.client.EpicLinkedIssuesSearch(epicKey, fields, maxResults, startAt)
+	case "jiraSprintIssues":
+		sprintID64, err := sprintIDArg(args["sprintId"])
+		if err != nil {
+			return nil, err
+		}
+		defMax := p.searchDefaultMax
+		maxCap := p.searchMaxCap
+		if defMax <= 0 {
+			defMax = defaultSearchMaxResults
+		}
+		if maxCap <= 0 {
+			maxCap = maxSearchMaxResultsCap
+		}
+		maxResults := intArg(args, "maxResults", defMax)
+		if maxResults <= 0 {
+			maxResults = defMax
+		}
+		if maxResults > maxCap {
+			maxResults = maxCap
+		}
+		startAt := intArg(args, "startAt", 0)
+		if startAt < 0 {
+			startAt = 0
+		}
+		return p.client.SprintIssues(sprintID64, startAt, maxResults)
 	case "jiraIssueWorklogs":
 		issueKey, _ := args["issueKey"].(string)
 		wStart := intArg(args, "startAt", 0)
@@ -210,4 +331,65 @@ func boolArg(args map[string]any, key string) bool {
 		return b
 	}
 	return false
+}
+
+func issueTypesSliceArg(v any) []string {
+	if v == nil {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, e := range arr {
+		switch s := e.(type) {
+		case string:
+			out = append(out, s)
+		default:
+			out = append(out, fmt.Sprintf("%v", e))
+		}
+	}
+	return out
+}
+
+func sprintIDArg(v any) (int64, error) {
+	if v == nil {
+		return 0, fmt.Errorf("sprintId is required")
+	}
+	switch n := v.(type) {
+	case float64:
+		if n <= 0 || n != float64(int64(n)) {
+			return 0, fmt.Errorf("invalid sprintId (expect positive integer)")
+		}
+		return int64(n), nil
+	case int:
+		if n <= 0 {
+			return 0, fmt.Errorf("invalid sprintId (expect positive integer)")
+		}
+		return int64(n), nil
+	case int64:
+		if n <= 0 {
+			return 0, fmt.Errorf("invalid sprintId (expect positive integer)")
+		}
+		return n, nil
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil || i <= 0 {
+			return 0, fmt.Errorf("invalid sprintId (expect positive integer)")
+		}
+		return i, nil
+	case string:
+		s := strings.TrimSpace(n)
+		if s == "" {
+			return 0, fmt.Errorf("sprintId is required")
+		}
+		i, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || i <= 0 {
+			return 0, fmt.Errorf("invalid sprintId (expect positive integer)")
+		}
+		return i, nil
+	default:
+		return 0, fmt.Errorf("invalid sprintId type")
+	}
 }
