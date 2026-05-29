@@ -213,7 +213,14 @@ func escapeJQLString(s string) string {
 	return `"` + s + `"`
 }
 
-func buildIssuesSearchJQL(projectKey, issueType string) (string, error) {
+func validateJQLDate(s string) error {
+	if matched := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(strings.TrimSpace(s)); !matched {
+		return fmt.Errorf("invalid date format, expected yyyy-MM-dd")
+	}
+	return nil
+}
+
+func buildIssuesSearchJQL(projectKey, issueType, updatedFrom, updatedTo string) (string, error) {
 	if err := validateProjectKey(projectKey); err != nil {
 		return "", err
 	}
@@ -224,6 +231,20 @@ func buildIssuesSearchJQL(projectKey, issueType string) (string, error) {
 	if it != "" {
 		b.WriteString(" AND issuetype = ")
 		b.WriteString(escapeJQLString(it))
+	}
+	if s := strings.TrimSpace(updatedFrom); s != "" {
+		if err := validateJQLDate(s); err != nil {
+			return "", fmt.Errorf("updatedFrom: %w", err)
+		}
+		b.WriteString(" AND updated >= ")
+		b.WriteString(escapeJQLString(s))
+	}
+	if s := strings.TrimSpace(updatedTo); s != "" {
+		if err := validateJQLDate(s); err != nil {
+			return "", fmt.Errorf("updatedTo: %w", err)
+		}
+		b.WriteString(" AND updated <= ")
+		b.WriteString(escapeJQLString(s))
 	}
 	b.WriteString(" ORDER BY updated DESC")
 	return b.String(), nil
@@ -259,7 +280,7 @@ func capIssueTypeNames(issueTypes []string) []string {
 // buildAssigneeIssuesJQL builds JQL for issues assigned to a user, ordered by updated DESC.
 // projectKey optional: when empty, no project clause (respects user's browse permissions).
 // issueTypes optional OR filter on issuetype (capped).
-func buildAssigneeIssuesJQL(projectKey, assignee string, issueTypes []string) (string, error) {
+func buildAssigneeIssuesJQL(projectKey, assignee string, issueTypes []string, updatedFrom, updatedTo string) (string, error) {
 	if err := validateAssigneeToken(assignee); err != nil {
 		return "", err
 	}
@@ -288,6 +309,20 @@ func buildAssigneeIssuesJQL(projectKey, assignee string, issueTypes []string) (s
 		}
 		b.WriteString(")")
 	}
+	if s := strings.TrimSpace(updatedFrom); s != "" {
+		if err := validateJQLDate(s); err != nil {
+			return "", fmt.Errorf("updatedFrom: %w", err)
+		}
+		b.WriteString(" AND updated >= ")
+		b.WriteString(escapeJQLString(s))
+	}
+	if s := strings.TrimSpace(updatedTo); s != "" {
+		if err := validateJQLDate(s); err != nil {
+			return "", fmt.Errorf("updatedTo: %w", err)
+		}
+		b.WriteString(" AND updated <= ")
+		b.WriteString(escapeJQLString(s))
+	}
 	b.WriteString(" ORDER BY updated DESC")
 	return b.String(), nil
 }
@@ -306,9 +341,9 @@ func buildEpicLinkedJQL(epicKey string) (string, error) {
 	return b.String(), nil
 }
 
-// AssigneeIssuesSearch POST /rest/api/2/search with constrained assignee (+ optional project / types) JQL.
-func (c *JiraClient) AssigneeIssuesSearch(projectKey, assignee string, issueTypes []string, fields []string, maxResults, startAt int) (json.RawMessage, error) {
-	jql, err := buildAssigneeIssuesJQL(projectKey, assignee, issueTypes)
+// AssigneeIssuesSearch POST /rest/api/2/search with constrained assignee (+ optional project / types / updated range) JQL.
+func (c *JiraClient) AssigneeIssuesSearch(projectKey, assignee string, issueTypes []string, fields []string, maxResults, startAt int, updatedFrom, updatedTo string) (json.RawMessage, error) {
+	jql, err := buildAssigneeIssuesJQL(projectKey, assignee, issueTypes, updatedFrom, updatedTo)
 	if err != nil {
 		return nil, err
 	}

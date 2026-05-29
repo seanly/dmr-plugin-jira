@@ -120,7 +120,7 @@ func (c *JiraClient) GetIssueWorklogs(issueKey string, startAt, maxResults int, 
 		StartAt:    page.StartAt,
 		MaxResults: page.MaxResults,
 		Total:      page.Total,
-		Note:       "total/startAt/maxResults are Jira pagination (unfiltered). worklogs are filtered then compacted (no avatar/email).",
+		Note:       "total/startAt/maxResults reflect Jira server-side pagination before author/time filtering. worklogs list is client-filtered then compacted (no avatar/email).",
 	}
 
 	for _, w := range page.Worklogs {

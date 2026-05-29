@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildAssigneeIssuesJQL(t *testing.T) {
-	jql, err := buildAssigneeIssuesJQL("INF", "jdoe", nil)
+	jql, err := buildAssigneeIssuesJQL("INF", "jdoe", nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestBuildAssigneeIssuesJQL(t *testing.T) {
 		t.Fatalf("got %q want %q", jql, want)
 	}
 
-	jql2, err := buildAssigneeIssuesJQL("", "u_1@test", []string{"Story", " Task "})
+	jql2, err := buildAssigneeIssuesJQL("", "u_1@test", []string{"Story", " Task "}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestAssigneeIssuesSearch_HTTP(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := NewJiraClient(srv.URL, "u", "p")
-	_, err := c.AssigneeIssuesSearch("XYZ", "alice", []string{"Bug"}, []string{"summary"}, 5, 0)
+	_, err := c.AssigneeIssuesSearch("XYZ", "alice", []string{"Bug"}, []string{"summary"}, 5, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

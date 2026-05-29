@@ -93,15 +93,15 @@ func (p *JiraPlugin) ProvideTools(req *proto.ProvideToolsRequest, resp *proto.Pr
 		},
 		{
 			Name:           "jiraIssuesSearch",
-			Description:    "按项目 key 搜索 issues，可选 issuetype 过滤；可选包含 timetracking",
-			ParametersJSON: `{"type": "object", "properties": {"projectKey": {"type": "string", "description": "项目 key，如 INF"}, "issueType": {"type": "string", "description": "可选，类型名如 Epic；不传则不限定类型"}, "maxResults": {"type": "integer", "description": "默认与上限见宿主 config 中 search_default_max_results / search_max_results_cap；未配置时默认 10、上限 20"}, "startAt": {"type": "integer", "description": "分页偏移，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "为 true 时在结果中包含 timetracking 字段"}}, "required": ["projectKey"]}`,
+			Description:    "按项目 key 搜索 issues，可选 issuetype 过滤；可选包含 timetracking；可选 updated 时间范围",
+			ParametersJSON: `{"type": "object", "properties": {"projectKey": {"type": "string", "description": "项目 key，如 INF"}, "issueType": {"type": "string", "description": "可选，类型名如 Epic；不传则不限定类型"}, "maxResults": {"type": "integer", "description": "默认与上限见宿主 config 中 search_default_max_results / search_max_results_cap；未配置时默认 10、上限 20"}, "startAt": {"type": "integer", "description": "分页偏移，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "为 true 时在结果中包含 timetracking 字段"}, "updatedFrom": {"type": "string", "description": "可选，updated 下限日期，格式 yyyy-MM-dd，如 2026-01-01"}, "updatedTo": {"type": "string", "description": "可选，updated 上限日期（含），格式 yyyy-MM-dd，如 2026-01-31"}}, "required": ["projectKey"]}`,
 			Group:          "extended",
 			SearchHint:     "jira, issue, search, find, project, epic, 问题, 搜索, 查找, 项目",
 		},
 		{
 			Name:        "jiraAssigneeIssues",
-			Description: "列出指定用户的 issues，按更新时间倒序（最近在前）。可选限定项目 key；可选传入多个 issue 类型名（至多 10 个，OR）；assignee 为 Jira 用户名风格的 token（非任意 JQL）。可选 includeTimetracking",
-			ParametersJSON: `{"type": "object", "properties": {"assignee": {"type": "string", "description": "负责人用户名/token，如 jdoe"}, "projectKey": {"type": "string", "description": "可选；不传则不按项目筛选（Browse 权限生效）"}, "issueTypes": {"type": "array", "items": {"type": "string"}, "description": "可选，issuetype 名称列表（最多 10 个）如 Story Task"}, "maxResults": {"type": "integer", "description": "同 jiraIssuesSearch 默认与 cap"}, "startAt": {"type": "integer", "description": "分页，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "true 时在结果中含 timetracking"}}, "required": ["assignee"]}`,
+			Description: "列出指定用户的 issues，按更新时间倒序（最近在前）。可选限定项目 key；可选传入多个 issue 类型名（至多 10 个，OR）；assignee 为 Jira 用户名风格的 token（非任意 JQL）。可选 includeTimetracking；可选 updated 时间范围",
+			ParametersJSON: `{"type": "object", "properties": {"assignee": {"type": "string", "description": "负责人用户名/token，如 jdoe"}, "projectKey": {"type": "string", "description": "可选；不传则不按项目筛选（Browse 权限生效）"}, "issueTypes": {"type": "array", "items": {"type": "string"}, "description": "可选，issuetype 名称列表（最多 10 个）如 Story Task"}, "maxResults": {"type": "integer", "description": "同 jiraIssuesSearch 默认与 cap"}, "startAt": {"type": "integer", "description": "分页，默认 0"}, "includeTimetracking": {"type": "boolean", "description": "true 时在结果中含 timetracking"}, "updatedFrom": {"type": "string", "description": "可选，updated 下限日期，格式 yyyy-MM-dd"}, "updatedTo": {"type": "string", "description": "可选，updated 上限日期（含），格式 yyyy-MM-dd"}}, "required": ["assignee"]}`,
 			Group:       "extended",
 			SearchHint:  "jira, assignee, owner, mine, tasks, sprint, backlog, 负责人, 最近, 分配给",
 		},
@@ -142,10 +142,44 @@ func (p *JiraPlugin) ProvideSystemPrompt(req *proto.ProvideSystemPromptRequest, 
 		"### Jira (external plugin)\n"+
 			"This host calls Jira REST as username %q (**plugins.config.user**). "+
 			"It is the **API/integration** identity, not automatically the IM/chat user. "+
-			"When the user says “my” tickets or worklogs, prefer **assignee** from context (e.g. RunAgent ContextJSON) or ask; do not assume it matches this user unless your deployment documents that.",
-		u,
+			"Rules when the user asks about \"my\" tickets or worklogs:\n"+
+			"1. First try to infer the user's Jira identity from RunAgent ContextJSON or chat context; do not mention the integration username %q to the user.\n"+
+			"2. If still unsure, narrow the query by project key and time range (e.g. this week / this month) using jiraIssuesSearch or jiraIssueWorklogs, rather than asking for a username upfront.\n"+
+			"3. Only ask the user for their Jira username if a person-specific query is truly required and cannot be resolved from context. Ask naturally (e.g. '你的 Jira 用户名是什么？') — never use technical terms like 'assignee token'.",
+		u, u,
 	)
 	return nil
+}
+
+func (p *JiraPlugin) normalizeSearchPagination(args map[string]any) (maxResults, startAt int) {
+	defMax := p.searchDefaultMax
+	maxCap := p.searchMaxCap
+	if defMax <= 0 {
+		defMax = defaultSearchMaxResults
+	}
+	if maxCap <= 0 {
+		maxCap = maxSearchMaxResultsCap
+	}
+	maxResults = intArg(args, "maxResults", defMax)
+	if maxResults <= 0 {
+		maxResults = defMax
+	}
+	if maxResults > maxCap {
+		maxResults = maxCap
+	}
+	startAt = intArg(args, "startAt", 0)
+	if startAt < 0 {
+		startAt = 0
+	}
+	return
+}
+
+func searchFields(includeTT bool) []string {
+	fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
+	if includeTT {
+		fields = append(fields, "timetracking")
+	}
+	return fields
 }
 
 func (p *JiraPlugin) CallTool(req *proto.CallToolRequest, resp *proto.CallToolResponse) error {
@@ -182,115 +216,35 @@ func (p *JiraPlugin) executeTool(name string, args map[string]any) (any, error) 
 	case "jiraIssuesSearch":
 		projectKey, _ := args["projectKey"].(string)
 		issueType, _ := args["issueType"].(string)
-		defMax := p.searchDefaultMax
-		maxCap := p.searchMaxCap
-		if defMax <= 0 {
-			defMax = defaultSearchMaxResults
-		}
-		if maxCap <= 0 {
-			maxCap = maxSearchMaxResultsCap
-		}
-		maxResults := intArg(args, "maxResults", defMax)
-		if maxResults <= 0 {
-			maxResults = defMax
-		}
-		if maxResults > maxCap {
-			maxResults = maxCap
-		}
-		startAt := intArg(args, "startAt", 0)
-		if startAt < 0 {
-			startAt = 0
-		}
+		maxResults, startAt := p.normalizeSearchPagination(args)
 		includeTT := boolArg(args, "includeTimetracking")
-		jql, err := buildIssuesSearchJQL(projectKey, issueType)
+		updatedFrom, _ := args["updatedFrom"].(string)
+		updatedTo, _ := args["updatedTo"].(string)
+		jql, err := buildIssuesSearchJQL(projectKey, issueType, updatedFrom, updatedTo)
 		if err != nil {
 			return nil, err
 		}
-		fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
-		if includeTT {
-			fields = append(fields, "timetracking")
-		}
-		return p.client.Search(jql, fields, maxResults, startAt)
+		return p.client.Search(jql, searchFields(includeTT), maxResults, startAt)
 	case "jiraAssigneeIssues":
 		assignee, _ := args["assignee"].(string)
 		projectKey, _ := args["projectKey"].(string)
 		types := issueTypesSliceArg(args["issueTypes"])
-		defMax := p.searchDefaultMax
-		maxCap := p.searchMaxCap
-		if defMax <= 0 {
-			defMax = defaultSearchMaxResults
-		}
-		if maxCap <= 0 {
-			maxCap = maxSearchMaxResultsCap
-		}
-		maxResults := intArg(args, "maxResults", defMax)
-		if maxResults <= 0 {
-			maxResults = defMax
-		}
-		if maxResults > maxCap {
-			maxResults = maxCap
-		}
-		startAt := intArg(args, "startAt", 0)
-		if startAt < 0 {
-			startAt = 0
-		}
+		maxResults, startAt := p.normalizeSearchPagination(args)
 		includeTT := boolArg(args, "includeTimetracking")
-		fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
-		if includeTT {
-			fields = append(fields, "timetracking")
-		}
-		return p.client.AssigneeIssuesSearch(projectKey, assignee, types, fields, maxResults, startAt)
+		updatedFrom, _ := args["updatedFrom"].(string)
+		updatedTo, _ := args["updatedTo"].(string)
+		return p.client.AssigneeIssuesSearch(projectKey, assignee, types, searchFields(includeTT), maxResults, startAt, updatedFrom, updatedTo)
 	case "jiraEpicLinkedIssues":
 		epicKey, _ := args["epicKey"].(string)
-		defMax := p.searchDefaultMax
-		maxCap := p.searchMaxCap
-		if defMax <= 0 {
-			defMax = defaultSearchMaxResults
-		}
-		if maxCap <= 0 {
-			maxCap = maxSearchMaxResultsCap
-		}
-		maxResults := intArg(args, "maxResults", defMax)
-		if maxResults <= 0 {
-			maxResults = defMax
-		}
-		if maxResults > maxCap {
-			maxResults = maxCap
-		}
-		startAt := intArg(args, "startAt", 0)
-		if startAt < 0 {
-			startAt = 0
-		}
+		maxResults, startAt := p.normalizeSearchPagination(args)
 		includeTT := boolArg(args, "includeTimetracking")
-		fields := []string{"summary", "issuetype", "status", "assignee", "updated"}
-		if includeTT {
-			fields = append(fields, "timetracking")
-		}
-		return p.client.EpicLinkedIssuesSearch(epicKey, fields, maxResults, startAt)
+		return p.client.EpicLinkedIssuesSearch(epicKey, searchFields(includeTT), maxResults, startAt)
 	case "jiraSprintIssues":
 		sprintID64, err := sprintIDArg(args["sprintId"])
 		if err != nil {
 			return nil, err
 		}
-		defMax := p.searchDefaultMax
-		maxCap := p.searchMaxCap
-		if defMax <= 0 {
-			defMax = defaultSearchMaxResults
-		}
-		if maxCap <= 0 {
-			maxCap = maxSearchMaxResultsCap
-		}
-		maxResults := intArg(args, "maxResults", defMax)
-		if maxResults <= 0 {
-			maxResults = defMax
-		}
-		if maxResults > maxCap {
-			maxResults = maxCap
-		}
-		startAt := intArg(args, "startAt", 0)
-		if startAt < 0 {
-			startAt = 0
-		}
+		maxResults, startAt := p.normalizeSearchPagination(args)
 		return p.client.SprintIssues(sprintID64, startAt, maxResults)
 	case "jiraIssueWorklogs":
 		issueKey, _ := args["issueKey"].(string)
